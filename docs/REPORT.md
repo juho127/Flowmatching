@@ -47,6 +47,20 @@
 - 해석: Flow는 LSTM/N-BEATS 대비 RMSE가 낮고 안정적 방향 정확도를 보임. Transformer는 열위.
 - 참고: `Naive`의 낮은 MAE는 정규화 스케일의 특이성에 기인할 수 있어 실제 단위 비교가 필요.
 
+### 6.1-보강) 실측(USD) 단위 비교
+파일: `results/compare/compare_metrics_real.json` 기준 (역스케일: `target_std = scalers.target_scaler.scale_[0]`).
+
+| Model | MAE (USD) | RMSE (USD) |
+|---|---:|---:|
+| Naive | 957.64 | 1375.77 |
+| SeasonalNaive | 1388.00 | 1874.39 |
+| LSTM | 1955.70 | 2437.95 |
+| Transformer | 2953.12 | 3703.09 |
+| N-BEATS | 1642.98 | 2154.29 |
+| Flow Matching | 1614.12 | 2053.97 |
+
+- 해석: USD 기준에서도 Flow가 LSTM/Transformer 대비 낮은 오차를 보이며, N-BEATS와 비슷하거나 더 낮은 수준으로 확인됩니다.
+
 ### 6.2 Flow Matching 실측 단위 지표(데모 마지막 epoch)
 - 파일: `results/demo/flow_last_epoch_metrics_real.json`
   - MAE(real): 2883.24

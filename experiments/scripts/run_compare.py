@@ -17,10 +17,13 @@ from src.training.trainer import (
 from src.models.baselines.naive import SeasonalNaiveForecaster
 from src.evaluation.evaluator import evaluate_point
 from src.utils.io import ensure_dir, save_json
+from src.utils.seed import set_seed
+from src.evaluation.evaluator import inverse_scale_metrics
 from src.utils.visualization import plot_bar_comparison
 
 
 def main():
+    set_seed(42)
     results_dir = "/home/basecamp/FlowMatching/results/compare"
     ensure_dir(results_dir)
 
@@ -95,20 +98,33 @@ def main():
         "dir": history["val_dir"][-1],
     }
 
-    # Save
-    save_json({
+    # Save (scaled metrics)
+    scaled = {
         "naive": naive,
         "seasonal_naive": seasonal_metrics,
         "lstm": lstm_metrics,
         "transformer": transformer_metrics,
         "nbeats": nbeats_metrics,
         "flow": flow_metrics,
-    }, os.path.join(results_dir, "compare_metrics.json"))
+    }
+    save_json(scaled, os.path.join(results_dir, "compare_metrics.json"))
+
+    # Save (real scale via inverse scaling using target std)
+    target_std = float(scalers.target_scaler.scale_[0])
+    real = {k: inverse_scale_metrics(v, target_std) for k, v in scaled.items()}
+    save_json(real, os.path.join(results_dir, "compare_metrics_real.json"))
     labels = ["Naive", "SeasonalNaive", "LSTM", "Transformer", "NBEATS", "Flow"]
     mae_vals = [naive["mae"], seasonal_metrics["mae"], lstm_metrics["mae"], transformer_metrics["mae"], nbeats_metrics["mae"], flow_metrics["mae"]]
     rmse_vals = [naive["rmse"], seasonal_metrics["rmse"], lstm_metrics["rmse"], transformer_metrics["rmse"], nbeats_metrics["rmse"], flow_metrics["rmse"]]
     plot_bar_comparison(labels, mae_vals, ylabel="MAE (scaled)", save_path=os.path.join(results_dir, "compare_mae.png"))
     plot_bar_comparison(labels, rmse_vals, ylabel="RMSE (scaled)", save_path=os.path.join(results_dir, "compare_rmse.png"))
+
+    # Real-scale plots
+    real_labels = labels
+    mae_real_vals = [real[k]["mae_real"] for k in ["naive", "seasonal_naive", "lstm", "transformer", "nbeats", "flow"]]
+    rmse_real_vals = [real[k]["rmse_real"] for k in ["naive", "seasonal_naive", "lstm", "transformer", "nbeats", "flow"]]
+    plot_bar_comparison(real_labels, mae_real_vals, ylabel="MAE (USD)", save_path=os.path.join(results_dir, "compare_mae_real.png"), title="MAE Comparison (USD)")
+    plot_bar_comparison(real_labels, rmse_real_vals, ylabel="RMSE (USD)", save_path=os.path.join(results_dir, "compare_rmse_real.png"), title="RMSE Comparison (USD)" )
 
 
 if __name__ == "__main__":
