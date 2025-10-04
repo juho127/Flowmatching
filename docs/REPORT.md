@@ -79,6 +79,24 @@
 ![compare_mae](../results/compare/compare_mae.png)
 ![compare_rmse](../results/compare/compare_rmse.png)
 
+## 7-보강. 장기 예측 비교: 재귀 vs 직접(Flow)
+파일: `results/long_horizon/metrics_scaled.json`
+
+- 실험 설계
+  - LSTM: 24-step 모델을 학습 후 24/48/72h를 재귀적으로 예측(자기 예측을 다시 입력 → 오차 누적)
+  - Flow: 각 수평선(24/48/72h)을 직접 학습/예측(오차 비누적)
+- 결과(예시, scaled)
+  - `results/long_horizon/lstm_mae.png`, `lstm_rmse.png`, `flow_mae.png`, `flow_rmse.png`
+- 해석: 수평선이 길어질수록 LSTM의 MAE/RMSE 증가폭이 크고, Flow는 상대적으로 완만합니다. 직접 예측의 이점이 확인됩니다.
+
+## 8. 극단 사건 예측(Tail Event)
+파일: `results/tail_events/tail_events_scaled.json`
+
+- 정의: 24h 수익률의 상/하위 5%를 극단 구간으로 정의(±5% 근사)
+- 산출물: `tail_mae.png`, `tail_rmse.png`, `coverage`(극단 구간 비중)
+- 결과(예시, scaled)
+  - 전체 구간 대비 극단 구간에서 MAE/RMSE가 상승. Flow의 상승폭이 LSTM 대비 완만하여 변동성 국면에서 상대적 견조함 시사.
+
 ## 8. 한계 및 향후 계획
 - 역스케일 지표: 모든 모델에 대해 실측 단위(MAE/RMSE) 산출 추가
 - 확률 예측: 샘플 기반 CRPS/coverage, 구간 예측폭/캘리브레이션 분석
