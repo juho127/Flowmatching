@@ -88,3 +88,40 @@ python3 -m experiments.scripts.run_compare
 
 ## 라이선스
 - 별도 명시 없을 경우 MIT 라이선스를 권장합니다. 필요 시 업데이트하세요.
+
+
+---
+
+## English Overview
+
+### What is this project?
+Reproducible PyTorch pipeline for Bitcoin hourly forecasting comparing Flow Matching against classic and deep learning baselines.
+
+### Key features
+- Data pipeline: Yahoo Finance hourly BTC-USD with recent-720-day fallback, feature engineering (OHLCV + TA), standardization, sliding windows
+- Models:
+  - Baselines: Naive, SeasonalNaive (24h)
+  - Deep Learning: LSTM, Transformer, N-BEATS
+  - Proposed: Flow Matching (TimeSeriesFlowNet with rectified-flow objective + ODE inference)
+- Evaluation & viz: MAE/RMSE/MAPE/Directional Accuracy, training/validation curves, model comparison bars, forecast examples, inverse-scaled metrics
+- Scripts: `run_demo` for a minimal end-to-end run, `run_compare` for multi-model benchmarking
+
+### Quickstart
+```bash
+python3 -m pip install -r requirements.txt
+python3 -m experiments.scripts.run_demo
+```
+Outputs (examples) under `results/demo/`: training curves, validation metrics, forecast example, model checkpoint, and JSON metrics.
+
+### Benchmark script
+```bash
+python3 -m experiments.scripts.run_compare
+```
+Generates `results/compare/compare_metrics.json`, `compare_mae.png`, `compare_rmse.png` covering Naive, SeasonalNaive, LSTM, Transformer, N-BEATS, and Flow.
+
+### Notes
+- Yahoo hourly data is limited to the most recent ~730 days; the pipeline falls back to `period=720d` automatically.
+- Inverse scaling of MAE/RMSE to price units uses the target scaler's std.
+
+### License
+MIT (suggested). Update as needed.
