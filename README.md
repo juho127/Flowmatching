@@ -87,7 +87,7 @@ python3 -m experiments.scripts.run_compare
 - 데이터 제공처 제약(야후 1시간 봉 최대 ~730일)에 따른 폴백 로직을 포함합니다.
 
 ## 라이선스
-- 별도 명시 없을 경우 MIT 라이선스를 권장합니다. 필요 시 업데이트하세요.
+- 본 프로젝트는 MIT License를 따릅니다. 상세 내용은 `LICENSE` 파일을 참고하세요.
 
 
 ---
@@ -124,4 +124,4 @@ Generates `results/compare/compare_metrics.json`, `compare_mae.png`, `compare_rm
 - Inverse scaling of MAE/RMSE to price units uses the target scaler's std.
 
 ### License
-MIT (suggested). Update as needed.
+This project is licensed under the MIT License. See `LICENSE` for details.
