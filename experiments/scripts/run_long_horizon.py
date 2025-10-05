@@ -13,9 +13,12 @@ from src.data.data_loader import WindowConfig, build_datasets, build_loaders
 from src.data.preprocessor import Scalers
 from src.models.flow_matching.flow_net import FlowConfig, TimeSeriesFlowNet, FlowForecaster
 from src.models.deep_learning.lstm import LSTMForecaster
+from src.models.deep_learning.transformer import TransformerForecaster
+from src.models.deep_learning.nbeats import NBeatsForecaster
 from src.training.trainer import TrainConfig, train_flow_matching
 from src.evaluation.evaluator import evaluate_point
 from src.utils.visualization import plot_bar_comparison
+import matplotlib.pyplot as plt
 
 
 def inverse_target(y_scaled: torch.Tensor, scalers: Scalers) -> torch.Tensor:
@@ -25,19 +28,19 @@ def inverse_target(y_scaled: torch.Tensor, scalers: Scalers) -> torch.Tensor:
 
 
 @torch.no_grad()
-def lstm_recursive_forecast(
-    model: LSTMForecaster,
+def recursive_forecast(
+    model,  # LSTMForecaster, TransformerForecaster, or NBeats
     val_loader: DataLoader,
     lookback: int,
     close_index: int,
     horizons: List[int],
+    output_dim: int = 24,
 ) -> Dict[int, Dict[str, float]]:
+    """Generic recursive forecast for any model trained on 24h horizon"""
     device = next(model.parameters()).device
     model.eval()
     results: Dict[int, Dict[str, float]] = {}
 
-    # We'll build predictions for 24, 48, 72 by iterative feeding back the predicted last step
-    # Approximation: copy the last feature vector and replace only 'close'.
     for H in horizons:
         preds_all, tgts_all = [], []
         for xb, yb in val_loader:
@@ -48,13 +51,13 @@ def lstm_recursive_forecast(
             x_window = xb.clone()
             out_seq: List[torch.Tensor] = []
             while remaining > 0:
-                step_h = min(24, remaining)  # model trained for 24-step outputs
-                yhat_24 = model(x_window)  # [B, 24]
-                out_seq.append(yhat_24[:, :step_h])
-                # prepare next window: shift left by step_h and append synthetic frames
+                step_h = min(output_dim, remaining)
+                yhat = model(x_window)  # [B, output_dim]
+                out_seq.append(yhat[:, :step_h])
+                # shift window and append synthetic features
                 for _ in range(step_h):
                     last_feat = x_window[:, -1, :].clone()
-                    last_feat[:, close_index] = yhat_24[:, -1]  # use last step prediction as next close
+                    last_feat[:, close_index] = yhat[:, -1]
                     x_window = torch.cat([x_window[:, 1:, :], last_feat.unsqueeze(1)], dim=1)
                 remaining -= step_h
 
@@ -88,6 +91,25 @@ def train_flow_for_horizon(
     }
 
 
+def train_baseline_24h(model, train_loader, device, epochs=5):
+    """Train a baseline model for 24h horizon"""
+    model.to(device)
+    opt = torch.optim.AdamW(model.parameters(), lr=1e-3)
+    loss_fn = torch.nn.MSELoss()
+    for _ in range(epochs):
+        model.train()
+        for xb, yb in train_loader:
+            xb = xb.to(device)
+            yb = yb.to(device)
+            pred = model(xb)
+            loss = loss_fn(pred, yb)
+            opt.zero_grad(set_to_none=True)
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            opt.step()
+    return model
+
+
 def main() -> None:
     set_seed(42)
     results_dir = "/home/basecamp/FlowMatching/results/long_horizon"
@@ -99,25 +121,21 @@ def main() -> None:
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    # LSTM trained once for 24-step output
-    lstm = LSTMForecaster(input_dim=len(feature_cols), hidden_dim=128, num_layers=2, horizon=24).to(device)
-    opt = torch.optim.AdamW(lstm.parameters(), lr=1e-3)
-    loss_fn = torch.nn.MSELoss()
-    for _ in range(5):  # short training for demo
-        lstm.train()
-        for xb, yb in train_loader_24:
-            xb = xb.to(device)
-            yb = yb.to(device)
-            pred = lstm(xb)
-            loss = loss_fn(pred, yb)
-            opt.zero_grad(set_to_none=True)
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(lstm.parameters(), 1.0)
-            opt.step()
+    # Train baseline models once for 24-step output
+    lstm = LSTMForecaster(input_dim=len(feature_cols), hidden_dim=128, num_layers=2, horizon=24)
+    lstm = train_baseline_24h(lstm, train_loader_24, device, epochs=5)
 
-    # Build per-horizon loaders for fair evaluation/training
+    transformer = TransformerForecaster(input_dim=len(feature_cols), horizon=24, d_model=128, nhead=4, num_layers=2)
+    transformer = train_baseline_24h(transformer, train_loader_24, device, epochs=5)
+
+    nbeats = NBeatsForecaster(input_dim=len(feature_cols), lookback=168, horizon=24, hidden_dim=128)
+    nbeats = train_baseline_24h(nbeats, train_loader_24, device, epochs=5)
+
+    # Build per-horizon loaders for evaluation/training
     horizons = [24, 48, 72]
-    recursive_metrics: Dict[int, Dict[str, float]] = {}
+    lstm_recursive_metrics: Dict[int, Dict[str, float]] = {}
+    transformer_recursive_metrics: Dict[int, Dict[str, float]] = {}
+    nbeats_recursive_metrics: Dict[int, Dict[str, float]] = {}
     flow_metrics: Dict[int, Dict[str, float]] = {}
 
     for H in horizons:
@@ -125,26 +143,122 @@ def main() -> None:
         ds_tr_H, ds_va_H, _, _, _ = build_datasets(None, None, None, None, window_H)
         tr_loader_H, va_loader_H, _ = build_loaders(ds_tr_H, ds_va_H, ds_va_H, batch_size=128, num_workers=2)
 
-        # LSTM recursive on val loader for H
-        recursive_metrics[H] = lstm_recursive_forecast(
-            lstm, va_loader_H, lookback=window_H.lookback, close_index=3, horizons=[H]
-        )[H]
+        # Recursive forecasting for baselines
+        lstm_recursive_metrics[H] = recursive_forecast(lstm, va_loader_H, lookback=window_H.lookback, close_index=3, horizons=[H])[H]
+        transformer_recursive_metrics[H] = recursive_forecast(transformer, va_loader_H, lookback=window_H.lookback, close_index=3, horizons=[H])[H]
+        nbeats_recursive_metrics[H] = recursive_forecast(nbeats, va_loader_H, lookback=window_H.lookback, close_index=3, horizons=[H])[H]
 
         # Flow model trained directly for horizon H
         flow_metrics[H] = train_flow_for_horizon(len(feature_cols), H, tr_loader_H, va_loader_H, epochs=5)
 
-    save_json({"lstm_recursive": recursive_metrics, "flow_direct": flow_metrics}, os.path.join(results_dir, "metrics_scaled.json"))
+    # Save scaled metrics
+    metrics_scaled = {
+        "lstm_recursive": lstm_recursive_metrics,
+        "transformer_recursive": transformer_recursive_metrics,
+        "nbeats_recursive": nbeats_recursive_metrics,
+        "flow_direct": flow_metrics,
+    }
+    save_json(metrics_scaled, os.path.join(results_dir, "metrics_scaled.json"))
 
-    # Plot MAE/RMSE vs horizon
-    lstm_mae = [recursive_metrics[h]["mae"] for h in horizons]
+    # Real-scale metrics
+    target_std = float(scalers.target_scaler.scale_[0])
+    metrics_real = {
+        "lstm_recursive": {h: {"mae_real": lstm_recursive_metrics[h]["mae"] * target_std, "rmse_real": lstm_recursive_metrics[h]["rmse"] * target_std} for h in horizons},
+        "transformer_recursive": {h: {"mae_real": transformer_recursive_metrics[h]["mae"] * target_std, "rmse_real": transformer_recursive_metrics[h]["rmse"] * target_std} for h in horizons},
+        "nbeats_recursive": {h: {"mae_real": nbeats_recursive_metrics[h]["mae"] * target_std, "rmse_real": nbeats_recursive_metrics[h]["rmse"] * target_std} for h in horizons},
+        "flow_direct": {h: {"mae_real": flow_metrics[h]["mae"] * target_std, "rmse_real": flow_metrics[h]["rmse"] * target_std} for h in horizons},
+    }
+    save_json(metrics_real, os.path.join(results_dir, "metrics_real.json"))
+
+    # Grouped bar plot for MAE comparison (scaled)
+    x_labels = ["24h", "48h", "72h"]
+    lstm_mae = [lstm_recursive_metrics[h]["mae"] for h in horizons]
+    transformer_mae = [transformer_recursive_metrics[h]["mae"] for h in horizons]
+    nbeats_mae = [nbeats_recursive_metrics[h]["mae"] for h in horizons]
     flow_mae = [flow_metrics[h]["mae"] for h in horizons]
-    lstm_rmse = [recursive_metrics[h]["rmse"] for h in horizons]
+
+    x = np.arange(len(horizons))
+    width = 0.2
+    fig, ax = plt.subplots(figsize=(10, 6))
+    ax.bar(x - 1.5*width, lstm_mae, width, label='LSTM (Recursive)')
+    ax.bar(x - 0.5*width, transformer_mae, width, label='Transformer (Recursive)')
+    ax.bar(x + 0.5*width, nbeats_mae, width, label='N-BEATS (Recursive)')
+    ax.bar(x + 1.5*width, flow_mae, width, label='Flow (Direct)')
+    ax.set_xlabel('Horizon')
+    ax.set_ylabel('MAE (scaled)')
+    ax.set_title('Long-Horizon Forecasting: MAE Comparison')
+    ax.set_xticks(x)
+    ax.set_xticklabels(x_labels)
+    ax.legend()
+    ax.grid(axis='y', linestyle='--', alpha=0.7)
+    plt.tight_layout()
+    plt.savefig(os.path.join(results_dir, "all_models_mae_scaled.png"))
+    plt.close()
+
+    # Grouped bar plot for RMSE comparison (scaled)
+    lstm_rmse = [lstm_recursive_metrics[h]["rmse"] for h in horizons]
+    transformer_rmse = [transformer_recursive_metrics[h]["rmse"] for h in horizons]
+    nbeats_rmse = [nbeats_recursive_metrics[h]["rmse"] for h in horizons]
     flow_rmse = [flow_metrics[h]["rmse"] for h in horizons]
 
-    plot_bar_comparison(["24", "48", "72"], lstm_mae, ylabel="LSTM MAE (scaled)", save_path=os.path.join(results_dir, "lstm_mae.png"), title="LSTM Recursive MAE")
-    plot_bar_comparison(["24", "48", "72"], flow_mae, ylabel="Flow MAE (scaled)", save_path=os.path.join(results_dir, "flow_mae.png"), title="Flow Direct MAE")
-    plot_bar_comparison(["24", "48", "72"], lstm_rmse, ylabel="LSTM RMSE (scaled)", save_path=os.path.join(results_dir, "lstm_rmse.png"), title="LSTM Recursive RMSE")
-    plot_bar_comparison(["24", "48", "72"], flow_rmse, ylabel="Flow RMSE (scaled)", save_path=os.path.join(results_dir, "flow_rmse.png"), title="Flow Direct RMSE")
+    fig, ax = plt.subplots(figsize=(10, 6))
+    ax.bar(x - 1.5*width, lstm_rmse, width, label='LSTM (Recursive)')
+    ax.bar(x - 0.5*width, transformer_rmse, width, label='Transformer (Recursive)')
+    ax.bar(x + 0.5*width, nbeats_rmse, width, label='N-BEATS (Recursive)')
+    ax.bar(x + 1.5*width, flow_rmse, width, label='Flow (Direct)')
+    ax.set_xlabel('Horizon')
+    ax.set_ylabel('RMSE (scaled)')
+    ax.set_title('Long-Horizon Forecasting: RMSE Comparison')
+    ax.set_xticks(x)
+    ax.set_xticklabels(x_labels)
+    ax.legend()
+    ax.grid(axis='y', linestyle='--', alpha=0.7)
+    plt.tight_layout()
+    plt.savefig(os.path.join(results_dir, "all_models_rmse_scaled.png"))
+    plt.close()
+
+    # Real-scale plots
+    lstm_mae_real = [metrics_real["lstm_recursive"][h]["mae_real"] for h in horizons]
+    transformer_mae_real = [metrics_real["transformer_recursive"][h]["mae_real"] for h in horizons]
+    nbeats_mae_real = [metrics_real["nbeats_recursive"][h]["mae_real"] for h in horizons]
+    flow_mae_real = [metrics_real["flow_direct"][h]["mae_real"] for h in horizons]
+
+    fig, ax = plt.subplots(figsize=(10, 6))
+    ax.bar(x - 1.5*width, lstm_mae_real, width, label='LSTM (Recursive)')
+    ax.bar(x - 0.5*width, transformer_mae_real, width, label='Transformer (Recursive)')
+    ax.bar(x + 0.5*width, nbeats_mae_real, width, label='N-BEATS (Recursive)')
+    ax.bar(x + 1.5*width, flow_mae_real, width, label='Flow (Direct)')
+    ax.set_xlabel('Horizon')
+    ax.set_ylabel('MAE (USD)')
+    ax.set_title('Long-Horizon Forecasting: MAE Comparison (Real Scale)')
+    ax.set_xticks(x)
+    ax.set_xticklabels(x_labels)
+    ax.legend()
+    ax.grid(axis='y', linestyle='--', alpha=0.7)
+    plt.tight_layout()
+    plt.savefig(os.path.join(results_dir, "all_models_mae_real.png"))
+    plt.close()
+
+    lstm_rmse_real = [metrics_real["lstm_recursive"][h]["rmse_real"] for h in horizons]
+    transformer_rmse_real = [metrics_real["transformer_recursive"][h]["rmse_real"] for h in horizons]
+    nbeats_rmse_real = [metrics_real["nbeats_recursive"][h]["rmse_real"] for h in horizons]
+    flow_rmse_real = [metrics_real["flow_direct"][h]["rmse_real"] for h in horizons]
+
+    fig, ax = plt.subplots(figsize=(10, 6))
+    ax.bar(x - 1.5*width, lstm_rmse_real, width, label='LSTM (Recursive)')
+    ax.bar(x - 0.5*width, transformer_rmse_real, width, label='Transformer (Recursive)')
+    ax.bar(x + 0.5*width, nbeats_rmse_real, width, label='N-BEATS (Recursive)')
+    ax.bar(x + 1.5*width, flow_rmse_real, width, label='Flow (Direct)')
+    ax.set_xlabel('Horizon')
+    ax.set_ylabel('RMSE (USD)')
+    ax.set_title('Long-Horizon Forecasting: RMSE Comparison (Real Scale)')
+    ax.set_xticks(x)
+    ax.set_xticklabels(x_labels)
+    ax.legend()
+    ax.grid(axis='y', linestyle='--', alpha=0.7)
+    plt.tight_layout()
+    plt.savefig(os.path.join(results_dir, "all_models_rmse_real.png"))
+    plt.close()
 
 
 if __name__ == "__main__":
