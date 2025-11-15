@@ -74,14 +74,60 @@ python3 -m experiments.scripts.run_compare
 - 시각화/IO: `src/utils/visualization.py`, `src/utils/io.py`
 - 실행 스크립트: `experiments/scripts/run_demo.py`, `experiments/scripts/run_compare.py`
 
+## 모델 상세 설명
+
+### Transformer Diffusion (새로 추가)
+**개념**: DDPM(Denoising Diffusion Probabilistic Models) 방식의 생성 모델을 시계열 예측에 적용한 트랜스포머 기반 아키텍처
+
+**핵심 특징**:
+- **Transformer Encoder**: 과거 시계열 데이터(lookback window)를 인코딩하여 컨텍스트 생성
+- **Transformer Decoder**: Cross-attention을 통해 과거 데이터와 예측 시퀀스를 연결
+- **Diffusion Process**:
+  - 학습: 정규 분포 노이즈를 예측 타겟에 추가하고, 모델이 노이즈를 예측하도록 학습 (DDPM objective)
+  - 추론: 순수 노이즈에서 시작해 50 스텝의 반복적 디노이징을 통해 최종 예측 생성
+- **Timestep Conditioning**: Sinusoidal embedding + Adaptive Layer Normalization으로 디퓨전 타임스텝 조건화
+- **일괄 예측**: 미래 horizon(24시간) 전체를 한 번에 생성
+
+**장점**:
+- 불확실성 모델링 가능 (생성 모델의 확률적 특성)
+- 트랜스포머의 장거리 의존성 포착 능력
+- 반복적 정제(iterative refinement)를 통한 고품질 예측
+
+**단점**:
+- 추론 시 여러 스텝 필요로 계산 비용 증가
+- 학습이 상대적으로 느림
+
+### Flow Matching (기존)
+**개념**: Rectified Flow 스타일의 연속 정규화 플로우(Continuous Normalizing Flow)
+
+**핵심 특징**:
+- GRU 기반 컨디션 인코더로 과거 데이터 임베딩
+- MLP 기반 velocity field 예측
+- 선형 보간 기반 학습 목표 (노이즈 → 타겟 간 직선 경로)
+- ODE solver로 추론 (10 스텝)
+
+**장점**:
+- Diffusion보다 빠른 샘플링
+- 안정적인 학습
+
+### 전통 딥러닝 모델
+- **LSTM**: 순환 신경망 기반, 시계열의 순차적 패턴 학습
+- **Transformer**: Self-attention 기반, 전체 시퀀스의 관계 포착
+- **N-BEATS**: 해석 가능한 백캐스팅/포캐스팅 구조, 트렌드/시즌성 분해
+
+### 베이스라인
+- **Naive**: 마지막 관측값 반복
+- **Seasonal Naive**: 24시간 전 값 반복 (일간 계절성 반영)
+
 ## 재현성
-- 시드 고정: 필요 시 `torch.manual_seed(42)` 추가
+- 시드 고정: `set_seed(42)` 사용 (run_compare 스크립트)
 - 환경: `requirements.txt`
 - 결과 저장: 자동으로 `results/` 아래에 메트릭/플롯/체크포인트 기록
 
 ## 참고 문헌
 - Flow Matching for Generative Modeling (Lipman et al., 2022)
 - Rectified Flow (Liu et al., 2023)
+- Denoising Diffusion Probabilistic Models (Ho et al., 2020)
 - Time series DL baselines (LSTM/Transformer/N-BEATS)
 
 ## 주의 및 면책
@@ -122,9 +168,61 @@ python3 -m experiments.scripts.run_compare
 ```
 Generates `results/compare/compare_metrics.json`, `compare_mae.png`, `compare_rmse.png` covering Naive, SeasonalNaive, LSTM, Transformer, N-BEATS, Transformer Diffusion, and Flow.
 
+### Model Details
+
+#### Transformer Diffusion (Newly Added)
+**Concept**: Transformer-based architecture applying DDPM (Denoising Diffusion Probabilistic Models) to time series forecasting.
+
+**Key Features**:
+- **Transformer Encoder**: Encodes historical time series (lookback window) to create context
+- **Transformer Decoder**: Connects past data and forecast sequence via cross-attention
+- **Diffusion Process**:
+  - Training: Adds Gaussian noise to target predictions; model learns to predict the noise (DDPM objective)
+  - Inference: Starts from pure noise and generates final forecast through 50-step iterative denoising
+- **Timestep Conditioning**: Uses sinusoidal embedding + adaptive layer normalization for diffusion timestep conditioning
+- **Direct Multi-step Forecasting**: Generates entire future horizon (24 hours) at once
+
+**Advantages**:
+- Uncertainty modeling (probabilistic nature of generative models)
+- Long-range dependency capture via Transformer architecture
+- High-quality predictions through iterative refinement
+
+**Disadvantages**:
+- Higher computational cost due to multi-step inference
+- Slower training compared to direct forecasters
+
+#### Flow Matching (Existing)
+**Concept**: Continuous Normalizing Flow with Rectified Flow-style objective.
+
+**Key Features**:
+- GRU-based condition encoder for history embedding
+- MLP-based velocity field prediction
+- Linear interpolation training objective (straight path from noise to target)
+- ODE solver for inference (10 steps)
+
+**Advantages**:
+- Faster sampling than Diffusion
+- Stable training
+
+#### Traditional Deep Learning Models
+- **LSTM**: Recurrent neural network for sequential pattern learning
+- **Transformer**: Self-attention based, captures relationships across entire sequence
+- **N-BEATS**: Interpretable backcasting/forecasting structure with trend/seasonality decomposition
+
+#### Baselines
+- **Naive**: Repeats last observed value
+- **Seasonal Naive**: Repeats value from 24 hours ago (daily seasonality)
+
 ### Notes
 - Yahoo hourly data is limited to the most recent ~730 days; the pipeline falls back to `period=720d` automatically.
 - Inverse scaling of MAE/RMSE to price units uses the target scaler's std.
+- Seed fixed at 42 in `run_compare` for reproducibility.
+
+### References
+- Flow Matching for Generative Modeling (Lipman et al., 2022)
+- Rectified Flow (Liu et al., 2023)
+- Denoising Diffusion Probabilistic Models (Ho et al., 2020)
+- Time series DL baselines (LSTM/Transformer/N-BEATS)
 
 ### License
 This project is licensed under the MIT License. See `LICENSE` for details.
