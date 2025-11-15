@@ -13,6 +13,7 @@ from src.training.trainer import (
     train_eval_lstm,
     train_eval_transformer,
     train_eval_nbeats,
+    train_eval_transformer_diffusion,
 )
 from src.models.baselines.naive import SeasonalNaiveForecaster
 from src.evaluation.evaluator import evaluate_point
@@ -85,6 +86,24 @@ def main():
         lr=1e-3,
     )
 
+    # Transformer Diffusion
+    transformer_diffusion_metrics = train_eval_transformer_diffusion(
+        input_dim=len(feature_cols),
+        horizon=window.horizon,
+        train_loader=train_loader,
+        val_loader=val_loader,
+        device=device,
+        d_model=128,
+        nhead=4,
+        num_encoder_layers=3,
+        num_decoder_layers=3,
+        dim_feedforward=512,
+        dropout=0.1,
+        num_diffusion_steps=50,
+        epochs=10,
+        lr=1e-3,
+    )
+
     # Flow
     flow_cfg = FlowConfig(feature_dim=len(feature_cols), horizon=window.horizon, hidden_dim=256, cond_dim=128, num_layers=3, num_steps=10)
     model = TimeSeriesFlowNet(flow_cfg)
@@ -105,6 +124,7 @@ def main():
         "lstm": lstm_metrics,
         "transformer": transformer_metrics,
         "nbeats": nbeats_metrics,
+        "transformer_diffusion": transformer_diffusion_metrics,
         "flow": flow_metrics,
     }
     save_json(scaled, os.path.join(results_dir, "compare_metrics.json"))
@@ -113,16 +133,16 @@ def main():
     target_std = float(scalers.target_scaler.scale_[0])
     real = {k: inverse_scale_metrics(v, target_std) for k, v in scaled.items()}
     save_json(real, os.path.join(results_dir, "compare_metrics_real.json"))
-    labels = ["Naive", "SeasonalNaive", "LSTM", "Transformer", "NBEATS", "Flow"]
-    mae_vals = [naive["mae"], seasonal_metrics["mae"], lstm_metrics["mae"], transformer_metrics["mae"], nbeats_metrics["mae"], flow_metrics["mae"]]
-    rmse_vals = [naive["rmse"], seasonal_metrics["rmse"], lstm_metrics["rmse"], transformer_metrics["rmse"], nbeats_metrics["rmse"], flow_metrics["rmse"]]
+    labels = ["Naive", "SeasonalNaive", "LSTM", "Transformer", "NBEATS", "TransformerDiff", "Flow"]
+    mae_vals = [naive["mae"], seasonal_metrics["mae"], lstm_metrics["mae"], transformer_metrics["mae"], nbeats_metrics["mae"], transformer_diffusion_metrics["mae"], flow_metrics["mae"]]
+    rmse_vals = [naive["rmse"], seasonal_metrics["rmse"], lstm_metrics["rmse"], transformer_metrics["rmse"], nbeats_metrics["rmse"], transformer_diffusion_metrics["rmse"], flow_metrics["rmse"]]
     plot_bar_comparison(labels, mae_vals, ylabel="MAE (scaled)", save_path=os.path.join(results_dir, "compare_mae.png"))
     plot_bar_comparison(labels, rmse_vals, ylabel="RMSE (scaled)", save_path=os.path.join(results_dir, "compare_rmse.png"))
 
     # Real-scale plots
     real_labels = labels
-    mae_real_vals = [real[k]["mae_real"] for k in ["naive", "seasonal_naive", "lstm", "transformer", "nbeats", "flow"]]
-    rmse_real_vals = [real[k]["rmse_real"] for k in ["naive", "seasonal_naive", "lstm", "transformer", "nbeats", "flow"]]
+    mae_real_vals = [real[k]["mae_real"] for k in ["naive", "seasonal_naive", "lstm", "transformer", "nbeats", "transformer_diffusion", "flow"]]
+    rmse_real_vals = [real[k]["rmse_real"] for k in ["naive", "seasonal_naive", "lstm", "transformer", "nbeats", "transformer_diffusion", "flow"]]
     plot_bar_comparison(real_labels, mae_real_vals, ylabel="MAE (USD)", save_path=os.path.join(results_dir, "compare_mae_real.png"), title="MAE Comparison (USD)")
     plot_bar_comparison(real_labels, rmse_real_vals, ylabel="RMSE (USD)", save_path=os.path.join(results_dir, "compare_rmse_real.png"), title="RMSE Comparison (USD)" )
 

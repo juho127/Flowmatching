@@ -14,6 +14,12 @@ from ..models.flow_matching.flow_net import TimeSeriesFlowNet, FlowForecaster, f
 from ..models.deep_learning.lstm import LSTMForecaster
 from ..models.deep_learning.transformer import TransformerForecaster
 from ..models.deep_learning.nbeats import NBeatsForecaster
+from ..models.deep_learning.transformer_diffusion import (
+    TransformerDiffusionForecaster,
+    TransformerDiffusionConfig,
+    DiffusionForecaster,
+    diffusion_loss,
+)
 
 
 @dataclass
@@ -231,6 +237,80 @@ def train_eval_nbeats(
             yb = yb.to(device)
             preds.append(model(xb))
             targets.append(yb)
+    pred = torch.cat(preds, 0)
+    tgt = torch.cat(targets, 0)
+    return {
+        "mae": mae(pred, tgt).item(),
+        "rmse": rmse(pred, tgt).item(),
+        "mape": mape(pred, tgt).item(),
+        "dir": directional_accuracy(pred, tgt).item(),
+    }
+
+
+def train_eval_transformer_diffusion(
+    input_dim: int,
+    horizon: int,
+    train_loader: DataLoader,
+    val_loader: DataLoader,
+    device: str,
+    d_model: int = 128,
+    nhead: int = 4,
+    num_encoder_layers: int = 3,
+    num_decoder_layers: int = 3,
+    dim_feedforward: int = 512,
+    dropout: float = 0.1,
+    num_diffusion_steps: int = 50,
+    epochs: int = 10,
+    lr: float = 1e-3,
+):
+    """
+    Train and evaluate Transformer Diffusion model.
+    """
+    cfg = TransformerDiffusionConfig(
+        feature_dim=input_dim,
+        horizon=horizon,
+        d_model=d_model,
+        nhead=nhead,
+        num_encoder_layers=num_encoder_layers,
+        num_decoder_layers=num_decoder_layers,
+        dim_feedforward=dim_feedforward,
+        dropout=dropout,
+        num_diffusion_steps=num_diffusion_steps,
+    )
+    model = TransformerDiffusionForecaster(cfg).to(device)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
+
+    # Training
+    for epoch in range(epochs):
+        model.train()
+        pbar = tqdm(train_loader, desc=f"[TransformerDiff] Train {epoch+1}/{epochs}")
+        total_loss = 0.0
+        for xb, yb in pbar:
+            xb = xb.to(device)
+            yb = yb.to(device)
+            loss = diffusion_loss(model, xb, yb, num_diffusion_steps)
+            optimizer.zero_grad(set_to_none=True)
+            loss.backward()
+            nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            optimizer.step()
+            total_loss += loss.item() * xb.size(0)
+            pbar.set_postfix({"loss": loss.item()})
+
+        avg_loss = total_loss / len(train_loader.dataset)
+        print(f"Epoch {epoch+1}/{epochs} - Loss: {avg_loss:.4f}")
+
+    # Evaluation
+    model.eval()
+    forecaster = DiffusionForecaster(model, num_steps=num_diffusion_steps)
+    preds, targets = [], []
+    with torch.no_grad():
+        for xb, yb in tqdm(val_loader, desc="[TransformerDiff] Eval"):
+            xb = xb.to(device)
+            yb = yb.to(device)
+            pred = forecaster.predict(xb)
+            preds.append(pred)
+            targets.append(yb)
+
     pred = torch.cat(preds, 0)
     tgt = torch.cat(targets, 0)
     return {

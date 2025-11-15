@@ -7,6 +7,7 @@
 - 모델:
   - Baselines: Naive, SeasonalNaive(24h)
   - ML/DL: LSTM, Transformer, N-BEATS
+  - Generative: Transformer Diffusion(DDPM-style denoising + Transformer encoder-decoder)
   - Proposed: Flow Matching(TimeSeriesFlowNet + Rectified Flow-style 학습 + ODE 추론)
 - 평가/시각화: MAE/RMSE/MAPE/방향정확도, 학습곡선/검증곡선, 비교 막대그래프, 예측 예시, 실측 단위 역스케일 지표 저장
 - 스크립트: 데모 실행(run_demo)과 대조군 비교(run_compare)
@@ -54,7 +55,7 @@ python3 -m experiments.scripts.run_demo
 - `compare_mae.png`, `compare_rmse.png`
 
 ## 대조군 비교 실행
-Naive, SeasonalNaive, LSTM, Transformer, N-BEATS, Flow를 동일 파이프라인에서 비교.
+Naive, SeasonalNaive, LSTM, Transformer, N-BEATS, Transformer Diffusion, Flow를 동일 파이프라인에서 비교.
 ```bash
 python3 -m experiments.scripts.run_compare
 ```
@@ -67,6 +68,7 @@ python3 -m experiments.scripts.run_compare
   - LSTM: `src/models/deep_learning/lstm.py`
   - Transformer: `src/models/deep_learning/transformer.py`
   - N-BEATS: `src/models/deep_learning/nbeats.py`
+  - Transformer Diffusion: `src/models/deep_learning/transformer_diffusion.py`
   - Flow Matching: `src/models/flow_matching/flow_net.py`
 - 학습/평가: `src/training/trainer.py`, `src/evaluation/metrics.py`, `src/evaluation/evaluator.py`
 - 시각화/IO: `src/utils/visualization.py`, `src/utils/io.py`
@@ -102,6 +104,7 @@ Reproducible PyTorch pipeline for Bitcoin hourly forecasting comparing Flow Matc
 - Models:
   - Baselines: Naive, SeasonalNaive (24h)
   - Deep Learning: LSTM, Transformer, N-BEATS
+  - Generative: Transformer Diffusion (DDPM-style denoising + Transformer encoder-decoder)
   - Proposed: Flow Matching (TimeSeriesFlowNet with rectified-flow objective + ODE inference)
 - Evaluation & viz: MAE/RMSE/MAPE/Directional Accuracy, training/validation curves, model comparison bars, forecast examples, inverse-scaled metrics
 - Scripts: `run_demo` for a minimal end-to-end run, `run_compare` for multi-model benchmarking
@@ -117,7 +120,7 @@ Outputs (examples) under `results/demo/`: training curves, validation metrics, f
 ```bash
 python3 -m experiments.scripts.run_compare
 ```
-Generates `results/compare/compare_metrics.json`, `compare_mae.png`, `compare_rmse.png` covering Naive, SeasonalNaive, LSTM, Transformer, N-BEATS, and Flow.
+Generates `results/compare/compare_metrics.json`, `compare_mae.png`, `compare_rmse.png` covering Naive, SeasonalNaive, LSTM, Transformer, N-BEATS, Transformer Diffusion, and Flow.
 
 ### Notes
 - Yahoo hourly data is limited to the most recent ~730 days; the pipeline falls back to `period=720d` automatically.
